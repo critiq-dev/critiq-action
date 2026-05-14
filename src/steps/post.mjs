@@ -3,12 +3,17 @@
  * PR comment posting: honors comment-mode and event; delegates to ../lib/post-review-comments.mjs.
  */
 
+import {
+  printActionRunSummary,
+  readFindingCountFromCritiqJson,
+} from '../lib/action-run-summary.util.mjs';
 import { readGithubEvent } from '../lib/event.util.mjs';
 import { writeGithubOutputPairs } from '../lib/github-output.util.mjs';
 import { runPostReviewComments } from '../lib/post-review-comments.mjs';
 
 const mode = (process.env.INPUT_COMMENT_MODE ?? 'inline').trim();
 const jsonPath = (process.env.INPUT_JSON_PATH ?? '').trim();
+const eventName = process.env.GITHUB_EVENT_NAME ?? '';
 
 function setOutputs(created, skipped) {
   writeGithubOutputPairs([
@@ -17,14 +22,29 @@ function setOutputs(created, skipped) {
   ]);
 }
 
+const findingCount = readFindingCountFromCritiqJson(jsonPath);
+
 if (mode !== 'inline' && mode !== 'inline+summary') {
   setOutputs(0, 0);
+  printActionRunSummary({
+    eventName,
+    findingCount,
+    commentsCreated: 0,
+    commentsSkipped: 0,
+    state: 'comment-mode-disabled',
+  });
   process.exit(0);
 }
 
-const eventName = process.env.GITHUB_EVENT_NAME ?? '';
 if (eventName !== 'pull_request') {
   setOutputs(0, 0);
+  printActionRunSummary({
+    eventName,
+    findingCount,
+    commentsCreated: 0,
+    commentsSkipped: 0,
+    state: 'not-pull-request',
+  });
   process.exit(0);
 }
 
@@ -32,6 +52,13 @@ const ev = readGithubEvent();
 const pr = ev.pull_request;
 if (!pr) {
   setOutputs(0, 0);
+  printActionRunSummary({
+    eventName,
+    findingCount,
+    commentsCreated: 0,
+    commentsSkipped: 0,
+    state: 'missing-payload',
+  });
   process.exit(0);
 }
 
@@ -58,6 +85,21 @@ try {
 } catch (e) {
   console.error(String(e));
   setOutputs(created, skipped);
+  printActionRunSummary({
+    eventName,
+    findingCount,
+    commentsCreated: created,
+    commentsSkipped: skipped,
+    state: 'post-error',
+  });
+  process.exit(0);
 }
 
+printActionRunSummary({
+  eventName,
+  findingCount,
+  commentsCreated: created,
+  commentsSkipped: skipped,
+  state: 'posted',
+});
 process.exit(0);

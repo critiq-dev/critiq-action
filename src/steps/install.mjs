@@ -8,11 +8,14 @@
 
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { printCritiqBanner } from '../lib/critiq-banner.util.mjs';
 import { appendGithubEnv } from '../lib/github-env.util.mjs';
 import { createLogger } from '../lib/log.util.mjs';
 import { runNpm } from '../lib/npm.util.mjs';
 import { hasRootCliDependency } from '../lib/package-json.util.mjs';
 import { resolveActionWorkspace } from '../lib/workspace.util.mjs';
+
+printCritiqBanner();
 
 const log = createLogger();
 const cwd = resolveActionWorkspace(process.env.INPUT_WORKING_DIRECTORY);
