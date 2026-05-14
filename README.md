@@ -121,7 +121,8 @@ For specialized setups, you can set **`CRITIQ_RULES_ROOT`** in the job environme
 | `use-repository-scope` | `false` | When `true`, full-repository scan on `pull_request` (omits base/head). Affects which lines can receive inline comments; see [Pull request comments](#pull-request-comments). |
 | `fail-on-severity` | `off` | Fail the job when any finding is at or above this severity: **`off`** (default), **`low`**, **`medium`**, **`high`**, **`critical`**. |
 | `comment-mode` | `inline` | **`inline`** (default): review comments. **`inline+summary`**: comments plus one sticky **issue** comment with counts. **`off`**: scan and outputs only. |
-| `github-token` | `github.token` | GitHub automatically provides `GITHUB_TOKEN` to every workflow; this input passes it through to the GitHub API for reviews and GraphQL. You only need to set a different token if your organization replaces the default token behavior (for example a custom credential from a prior step). |
+
+Posting review comments uses the job’s automatic **`GITHUB_TOKEN`**; set **`permissions.pull-requests: write`** on the workflow when using **`comment-mode`** **`inline`** or **`inline+summary`**.
 
 ---
 
@@ -185,7 +186,9 @@ So reruns and resolves do not spam the PR:
 
 ## Reusable workflow
 
-This repo ships [`.github/workflows/reusable-critiq.yml`](.github/workflows/reusable-critiq.yml). Call it from another workflow in your org:
+This repo ships [`.github/workflows/reusable-critiq.yml`](.github/workflows/reusable-critiq.yml). Call it from another workflow in your org.
+
+**Stable tag (after you publish a release):**
 
 ```yaml
 jobs:
@@ -193,6 +196,30 @@ jobs:
     uses: critiq-dev/critiq-action/.github/workflows/reusable-critiq.yml@v1
     secrets: inherit
 ```
+
+**Testing on `main`:** call the reusable at `@main`. The workflow runs the composite from the **same ref baked into that commit** (currently `@main`; bump the `Run Critiq` step in `reusable-critiq.yml` to `@v1` when you cut a stable release so `@v1` callers stay consistent).
+
+```yaml
+jobs:
+  critiq:
+    uses: critiq-dev/critiq-action/.github/workflows/reusable-critiq.yml@main
+    secrets: inherit
+```
+
+Optional inputs include **`checkout-layout`** (default **`single`**). Use **`checkout-layout: rules-with-sibling-core`** and **`working-directory: critiq-rules`** when the caller is **critiq-rules** (it checks out your repo under `critiq-rules/`, clones **critiq-dev/critiq-core**, builds it, then runs Critiq in that working directory so `file:../critiq-core/...` dependencies resolve).
+
+```yaml
+jobs:
+  critiq:
+    uses: critiq-dev/critiq-action/.github/workflows/reusable-critiq.yml@main
+    secrets: inherit
+    with:
+      checkout-layout: rules-with-sibling-core
+      working-directory: critiq-rules
+      fail-on-severity: off
+```
+
+Pass through other inputs (`cli-version`, `rules-version`, `target`, `comment-mode`, `fail-on-severity`, `use-repository-scope`, `node-version`) the same way as in [`reusable-critiq.yml`](.github/workflows/reusable-critiq.yml).
 
 ---
 
