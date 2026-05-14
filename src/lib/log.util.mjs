@@ -4,6 +4,8 @@
  */
 export function createLogger(prefix) {
   return (msg) => {
-    console.log(`[${prefix}] ${msg}`);
+    for (const line of String(msg).split('\n')) {
+      console.log(`[${prefix}] ${line}`);
+    }
   };
 }

@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { logCheckFindingsSummary } from '../lib/check-findings-summary.util.mjs';
 import { resolveCritiqBin } from '../lib/critiq-bin.util.mjs';
 import { readPrShasFromEvent } from '../lib/event.util.mjs';
 import { writeGithubOutputPairs } from '../lib/github-output.util.mjs';
@@ -113,13 +114,16 @@ if (!stdout.trim()) {
 writeFileSync(jsonPath, stdout, 'utf8');
 
 let findingCount = 0;
+/** @type {unknown} */
+let envelope = null;
 try {
-  const j = JSON.parse(stdout);
-  findingCount = Number(j.findingCount ?? 0);
+  envelope = JSON.parse(stdout);
+  findingCount = Number(/** @type {{ findingCount?: unknown }} */ (envelope).findingCount ?? 0);
 } catch {
   findingCount = 0;
 }
 
+logCheckFindingsSummary(log, envelope);
 log(`critiq exit=${code}, findingCount=${findingCount}`);
 writeGithubOutputPairs([
   ['exit-code', code],
