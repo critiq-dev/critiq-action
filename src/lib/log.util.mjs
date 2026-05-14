@@ -1,11 +1,11 @@
 /**
- * @param {string} prefix
+ * Plain stdout logger for CI (no step prefix).
  * @returns {(msg: string) => void}
  */
-export function createLogger(prefix) {
+export function createLogger() {
   return (msg) => {
     for (const line of String(msg).split('\n')) {
-      console.log(`[${prefix}] ${line}`);
+      console.log(line);
     }
   };
 }

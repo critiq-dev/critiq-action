@@ -8,7 +8,7 @@ import { appendFileSync } from 'node:fs';
 export function appendGithubEnv(line, opts = {}) {
   const ghEnv = process.env.GITHUB_ENV;
   if (!ghEnv) {
-    (opts.warn ?? console.warn)('[critiq-action] GITHUB_ENV is not set; env line will not persist.');
+    (opts.warn ?? console.warn)('GITHUB_ENV is not set; env line will not persist.');
     return;
   }
   appendFileSync(ghEnv, `${line}\n`, 'utf8');

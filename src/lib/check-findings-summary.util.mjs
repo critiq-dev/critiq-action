@@ -132,6 +132,7 @@ export function logCheckFindingsSummary(log, envelope) {
 
   if (blocks.length > 0) {
     log(blocks.join('\n\n'));
+    log('');
   }
 
   if (diags.length > 0) {

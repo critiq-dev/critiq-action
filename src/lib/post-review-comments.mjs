@@ -316,6 +316,6 @@ export async function runPostReviewComments() {
 
   setGithubOutput('review-comments-created', String(created));
   setGithubOutput('review-comments-skipped', String(skipped));
-  console.log(`Critiq PR comments: created=${created} skipped=${skipped}`);
+  console.log(`Inline review comments: created=${created} skipped=${skipped}`);
   return { created, skipped };
 }

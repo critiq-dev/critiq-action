@@ -14,7 +14,7 @@ import { writeGithubOutputPairs } from '../lib/github-output.util.mjs';
 import { createLogger } from '../lib/log.util.mjs';
 import { resolveActionWorkspace } from '../lib/workspace.util.mjs';
 
-const log = createLogger('Critiq scan');
+const log = createLogger();
 const cwd = resolveActionWorkspace(process.env.INPUT_WORKING_DIRECTORY);
 const target = (process.env.INPUT_TARGET ?? '.').trim() || '.';
 const staged = (process.env.INPUT_STAGED ?? 'false').toLowerCase() === 'true';
@@ -29,38 +29,30 @@ const stderrPath = path.join(runnerTemp, `critiq-check-${runId}-${attempt}.stder
 
 function extraArgs() {
   if (staged) {
-    log('Using --staged (diff against index).');
     return ['--staged'];
   }
   if (baseRef && headRef) {
-    log(`Using explicit --base / --head (${baseRef.slice(0, 7)}… / ${headRef.slice(0, 7)}…).`);
     return ['--base', baseRef, '--head', headRef];
   }
   if (baseRef || headRef) {
-    console.error('[Critiq scan] Set both base-ref and head-ref, or leave both empty.');
+    console.error('Set both base-ref and head-ref, or leave both empty.');
     process.exit(1);
   }
   if (eventName === 'pull_request') {
     const { base, head } = readPrShasFromEvent();
     if (base && head) {
-      log('pull_request event — scanning PR diff (default base/head from event).');
       return ['--base', base, '--head', head];
     }
-    log('pull_request event but could not read base/head from event payload — full scan.');
     return [];
   }
-  log(`${eventName} event — full scan (no --base/--head).`);
   return [];
 }
 
 const extra = extraArgs();
 const bin = resolveCritiqBin(cwd);
-log(`binary: ${bin}`);
-log(`target: ${target}`);
-log(`json output: ${jsonPath}`);
 
 const args = ['check', target, '--format', 'json', ...extra];
-log(`running: ${bin} ${args.join(' ')}`);
+log(`critiq ${args.join(' ')}`);
 
 const r = spawnSync(bin, args, {
   cwd,
@@ -69,7 +61,7 @@ const r = spawnSync(bin, args, {
 });
 
 if (r.error) {
-  console.error('[Critiq scan]', r.error);
+  console.error(r.error);
   writeGithubOutputPairs([
     ['exit-code', 1],
     ['finding-count', 0],
@@ -101,7 +93,7 @@ if (stderr) {
 }
 
 if (!stdout.trim()) {
-  console.error(`[Critiq scan] No JSON on stdout (exit ${code}). Stderr log: ${stderrPath}`);
+  console.error(`No JSON on stdout (exit ${code}). Stderr log: ${stderrPath}`);
   if (stderr) console.error(stderr);
   writeGithubOutputPairs([
     ['exit-code', code],
