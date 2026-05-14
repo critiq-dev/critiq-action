@@ -4,49 +4,18 @@
  * See action README for dedupe rules (line occupancy + resolved thread fingerprints).
  */
 
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { createGithubFetch } from './github-api.util.mjs';
+import { extractFpFromBody, formatFindingBody } from './fingerprint.util.mjs';
+import { lineKey, normalizePath } from './path.util.mjs';
+import { setGithubOutput } from './github-output.util.mjs';
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const JSON_PATH = process.env.CRITIQ_JSON_PATH;
-const COMMENT_MODE = process.env.COMMENT_MODE || 'inline';
-const PR_NUMBER = parseInt(process.env.PR_NUMBER || '', 10);
-const PR_HEAD_SHA = process.env.PR_HEAD_SHA;
-const REPO = process.env.GITHUB_REPOSITORY;
-const API_URL = (process.env.GITHUB_API_URL || 'https://api.github.com').replace(/\/$/, '');
-
-const FP_MARKER_PREFIX = '<!-- critiq-fp:';
-const FP_MARKER_SUFFIX = ' -->';
 const SUMMARY_MARKER = '<!-- critiq-summary:v1 -->';
 
-function setOutput(name, value) {
-  const v = String(value).replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-  appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${v}\n`, { encoding: 'utf8' });
-}
-
-function extractFpFromBody(body) {
-  const re = /<!--\s*critiq-fp:([^>]+?)\s*-->/i;
-  const m = typeof body === 'string' ? body.match(re) : null;
-  return m ? m[1].trim() : null;
-}
-
-function normalizePath(p) {
-  return String(p || '').replace(/\\/g, '/');
-}
-
-function githubFetch(path, init = {}) {
-  const url = path.startsWith('http') ? path : `${API_URL}${path}`;
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    ...init.headers,
-  };
-  if (GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
-  }
-  return fetch(url, { ...init, headers });
-}
-
-async function graphqlAllThreads(owner, name, prNumber) {
+/**
+ * @param {ReturnType<typeof createGithubFetch>} githubFetch
+ */
+async function graphqlAllThreads(githubFetch, owner, name, prNumber) {
   const query = `
     query($owner: String!, $name: String!, $n: Int!, $cursor: String) {
       repository(owner: $owner, name: $name) {
@@ -100,7 +69,10 @@ async function graphqlAllThreads(owner, name, prNumber) {
   return threads;
 }
 
-async function listAllPullReviewComments(owner, repo, prNumber) {
+/**
+ * @param {ReturnType<typeof createGithubFetch>} githubFetch
+ */
+async function listAllPullReviewComments(githubFetch, owner, repo, prNumber) {
   const out = [];
   let page = 1;
   for (;;) {
@@ -121,10 +93,6 @@ async function listAllPullReviewComments(owner, repo, prNumber) {
     page += 1;
   }
   return out;
-}
-
-function lineKey(path, line) {
-  return `${normalizePath(path)}:${Number(line)}`;
 }
 
 function fingerprintSetsFromThreads(threads) {
@@ -158,19 +126,6 @@ function occupiedLinesFromRest(restComments, headSha) {
   return occupiedLineAtHead;
 }
 
-function formatFindingBody(finding) {
-  const ruleId = finding.rule?.id || 'unknown-rule';
-  const title = finding.title || ruleId;
-  const summary = finding.summary || '';
-  const fp = finding.fingerprints?.primary;
-  if (!fp) {
-    return null;
-  }
-  const marker = `${FP_MARKER_PREFIX}${fp}${FP_MARKER_SUFFIX}`;
-  const lines = [`### ${title}`, '', summary, '', `Rule: \`${ruleId}\``, '', marker];
-  return lines.join('\n');
-}
-
 function findingLocation(finding) {
   const loc = finding.locations?.primary;
   if (!loc?.path || loc.startLine == null) {
@@ -179,7 +134,10 @@ function findingLocation(finding) {
   return { path: normalizePath(loc.path), line: Number(loc.startLine) };
 }
 
-async function createReview(owner, repo, prNumber, headSha, comments) {
+/**
+ * @param {ReturnType<typeof createGithubFetch>} githubFetch
+ */
+async function createReview(githubFetch, owner, repo, prNumber, headSha, comments) {
   if (comments.length === 0) {
     return;
   }
@@ -197,7 +155,10 @@ async function createReview(owner, repo, prNumber, headSha, comments) {
   }
 }
 
-async function upsertSummaryIssueComment(owner, repo, issueNumber, body) {
+/**
+ * @param {ReturnType<typeof createGithubFetch>} githubFetch
+ */
+async function upsertSummaryIssueComment(githubFetch, owner, repo, issueNumber, body) {
   const listPath = `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100`;
   const res = await githubFetch(listPath);
   if (!res.ok) {
@@ -249,103 +210,112 @@ function renderSummary(envelope) {
   return lines.join('\n');
 }
 
-async function main() {
+/**
+ * Uses process.env: GITHUB_TOKEN, CRITIQ_JSON_PATH, COMMENT_MODE, PR_NUMBER, PR_HEAD_SHA,
+ * GITHUB_REPOSITORY, GITHUB_API_URL, GITHUB_OUTPUT.
+ * @returns {Promise<{ created: number; skipped: number }>}
+ */
+export async function runPostReviewComments() {
+  const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+  const JSON_PATH = process.env.CRITIQ_JSON_PATH;
+  const COMMENT_MODE = process.env.COMMENT_MODE || 'inline';
+  const PR_NUMBER = parseInt(process.env.PR_NUMBER || '', 10);
+  const PR_HEAD_SHA = process.env.PR_HEAD_SHA;
+  const REPO = process.env.GITHUB_REPOSITORY;
+
   let created = 0;
   let skipped = 0;
 
-  try {
-    if (!GITHUB_TOKEN) {
-      throw new Error('GITHUB_TOKEN is not set');
-    }
-    if (!JSON_PATH) {
-      throw new Error('CRITIQ_JSON_PATH is not set');
-    }
-    if (!REPO || !PR_HEAD_SHA || !Number.isFinite(PR_NUMBER)) {
-      throw new Error('Missing PR_NUMBER, PR_HEAD_SHA, or GITHUB_REPOSITORY');
-    }
+  const githubFetch = createGithubFetch({
+    token: GITHUB_TOKEN,
+    apiUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
+  });
 
-    const [owner, repo] = REPO.split('/');
-    if (!owner || !repo) {
-      throw new Error(`Invalid GITHUB_REPOSITORY: ${REPO}`);
-    }
-
-    let envelope;
-    try {
-      envelope = JSON.parse(readFileSync(JSON_PATH, 'utf8'));
-    } catch {
-      console.log('No valid JSON at CRITIQ_JSON_PATH; skipping comments.');
-      setOutput('review-comments-created', '0');
-      setOutput('review-comments-skipped', '0');
-      return;
-    }
-
-    const findings = Array.isArray(envelope.findings) ? envelope.findings : [];
-
-    const threads = await graphqlAllThreads(owner, repo, PR_NUMBER);
-    const restComments = await listAllPullReviewComments(owner, repo, PR_NUMBER);
-    const { resolvedFp, activeFp } = fingerprintSetsFromThreads(threads);
-    const occupiedLineAtHead = occupiedLinesFromRest(restComments, PR_HEAD_SHA);
-
-    const toCreate = [];
-
-    for (const finding of findings) {
-      const fp = finding.fingerprints?.primary;
-      const loc = findingLocation(finding);
-      if (!fp || !loc) {
-        skipped += 1;
-        continue;
-      }
-
-      if (resolvedFp.has(fp)) {
-        skipped += 1;
-        continue;
-      }
-      if (activeFp.has(fp)) {
-        skipped += 1;
-        continue;
-      }
-      if (occupiedLineAtHead.has(lineKey(loc.path, loc.line))) {
-        skipped += 1;
-        continue;
-      }
-
-      const body = formatFindingBody(finding);
-      if (!body) {
-        skipped += 1;
-        continue;
-      }
-
-      toCreate.push({
-        path: loc.path,
-        line: loc.line,
-        side: 'RIGHT',
-        body,
-      });
-
-      activeFp.add(fp);
-      occupiedLineAtHead.add(lineKey(loc.path, loc.line));
-    }
-
-    const chunkSize = 60;
-    for (let i = 0; i < toCreate.length; i += chunkSize) {
-      const chunk = toCreate.slice(i, i + chunkSize);
-      await createReview(owner, repo, PR_NUMBER, PR_HEAD_SHA, chunk);
-      created += chunk.length;
-    }
-
-    if (COMMENT_MODE === 'inline+summary') {
-      await upsertSummaryIssueComment(owner, repo, PR_NUMBER, renderSummary(envelope));
-    }
-
-    setOutput('review-comments-created', String(created));
-    setOutput('review-comments-skipped', String(skipped));
-    console.log(`Critiq PR comments: created=${created} skipped=${skipped}`);
-  } catch (e) {
-    console.error(e);
-    setOutput('review-comments-created', String(created));
-    setOutput('review-comments-skipped', String(skipped));
-    process.exitCode = 1;
+  if (!GITHUB_TOKEN) {
+    throw new Error('GITHUB_TOKEN is not set');
   }
-}
+  if (!JSON_PATH) {
+    throw new Error('CRITIQ_JSON_PATH is not set');
+  }
+  if (!REPO || !PR_HEAD_SHA || !Number.isFinite(PR_NUMBER)) {
+    throw new Error('Missing PR_NUMBER, PR_HEAD_SHA, or GITHUB_REPOSITORY');
+  }
 
-await main();
+  const [owner, repo] = REPO.split('/');
+  if (!owner || !repo) {
+    throw new Error(`Invalid GITHUB_REPOSITORY: ${REPO}`);
+  }
+
+  let envelope;
+  try {
+    envelope = JSON.parse(readFileSync(JSON_PATH, 'utf8'));
+  } catch {
+    console.log('No valid JSON at CRITIQ_JSON_PATH; skipping comments.');
+    setGithubOutput('review-comments-created', '0');
+    setGithubOutput('review-comments-skipped', '0');
+    return { created: 0, skipped: 0 };
+  }
+
+  const findings = Array.isArray(envelope.findings) ? envelope.findings : [];
+
+  const threads = await graphqlAllThreads(githubFetch, owner, repo, PR_NUMBER);
+  const restComments = await listAllPullReviewComments(githubFetch, owner, repo, PR_NUMBER);
+  const { resolvedFp, activeFp } = fingerprintSetsFromThreads(threads);
+  const occupiedLineAtHead = occupiedLinesFromRest(restComments, PR_HEAD_SHA);
+
+  const toCreate = [];
+
+  for (const finding of findings) {
+    const fp = finding.fingerprints?.primary;
+    const loc = findingLocation(finding);
+    if (!fp || !loc) {
+      skipped += 1;
+      continue;
+    }
+
+    if (resolvedFp.has(fp)) {
+      skipped += 1;
+      continue;
+    }
+    if (activeFp.has(fp)) {
+      skipped += 1;
+      continue;
+    }
+    if (occupiedLineAtHead.has(lineKey(loc.path, loc.line))) {
+      skipped += 1;
+      continue;
+    }
+
+    const body = formatFindingBody(finding);
+    if (!body) {
+      skipped += 1;
+      continue;
+    }
+
+    toCreate.push({
+      path: loc.path,
+      line: loc.line,
+      side: 'RIGHT',
+      body,
+    });
+
+    activeFp.add(fp);
+    occupiedLineAtHead.add(lineKey(loc.path, loc.line));
+  }
+
+  const chunkSize = 60;
+  for (let i = 0; i < toCreate.length; i += chunkSize) {
+    const chunk = toCreate.slice(i, i + chunkSize);
+    await createReview(githubFetch, owner, repo, PR_NUMBER, PR_HEAD_SHA, chunk);
+    created += chunk.length;
+  }
+
+  if (COMMENT_MODE === 'inline+summary') {
+    await upsertSummaryIssueComment(githubFetch, owner, repo, PR_NUMBER, renderSummary(envelope));
+  }
+
+  setGithubOutput('review-comments-created', String(created));
+  setGithubOutput('review-comments-skipped', String(skipped));
+  console.log(`Critiq PR comments: created=${created} skipped=${skipped}`);
+  return { created, skipped };
+}

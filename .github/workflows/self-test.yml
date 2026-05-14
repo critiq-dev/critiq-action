@@ -27,7 +27,7 @@ jobs:
         id: first
         uses: ./
         with:
-          target: fixtures/minimal-repo
+          target: test/fixtures/minimal-repo
           comment-mode: inline
           fail-on-severity: off
 
@@ -35,7 +35,7 @@ jobs:
         id: second
         uses: ./
         with:
-          target: fixtures/minimal-repo
+          target: test/fixtures/minimal-repo
           comment-mode: inline
           fail-on-severity: off
 
@@ -61,7 +61,7 @@ jobs:
         id: scan
         uses: ./
         with:
-          target: fixtures/minimal-repo
+          target: test/fixtures/minimal-repo
           comment-mode: 'off'
           fail-on-severity: off
 

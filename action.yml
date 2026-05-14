@@ -70,33 +70,43 @@ runs:
         node-version: '24'
 
     - name: Install Critiq CLI and rules
-      uses: ./install
-      with:
-        working-directory: ${{ inputs.working-directory }}
-        cli-version: ${{ inputs.cli-version }}
-        rules-version: ${{ inputs.rules-version }}
+      shell: bash
+      run: node "${{ github.action_path }}/src/main.mjs" install
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+        INPUT_RULES_VERSION: ${{ inputs.rules-version }}
 
     - name: Run critiq check
       id: scan
-      uses: ./scan
-      with:
-        working-directory: ${{ inputs.working-directory }}
-        target: ${{ inputs.target }}
-        staged: ${{ inputs.staged }}
-        base-ref: ${{ inputs.base-ref }}
-        head-ref: ${{ inputs.head-ref }}
+      shell: bash
+      continue-on-error: true
+      run: node "${{ github.action_path }}/src/main.mjs" scan
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_STAGED: ${{ inputs.staged }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_HEAD_REF: ${{ inputs.head-ref }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
 
     - name: Post PR comments
       id: post
-      uses: ./post
+      shell: bash
       continue-on-error: true
-      with:
-        comment-mode: ${{ inputs.comment-mode }}
-        json-path: ${{ steps.scan.outputs.json-path }}
+      run: node "${{ github.action_path }}/src/main.mjs" post
+      env:
+        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        INPUT_JSON_PATH: ${{ steps.scan.outputs.json-path }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_API_URL: ${{ github.api_url }}
 
     - name: Fail on severity threshold
       if: ${{ inputs.fail-on-severity != 'off' }}
-      uses: ./fail-on-severity
-      with:
-        json-path: ${{ steps.scan.outputs.json-path }}
-        fail-on-severity: ${{ inputs.fail-on-severity }}
+      shell: bash
+      run: node "${{ github.action_path }}/src/main.mjs" fail-on-severity
+      env:
+        CRITIQ_JSON_PATH: ${{ steps.scan.outputs.json-path }}
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}

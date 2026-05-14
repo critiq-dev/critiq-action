@@ -87,7 +87,7 @@ The check runs **after** the scan and PR comment step so feedback is still poste
 
 ## How Critiq is installed
 
-The **[`install/action.yml`](install/action.yml)** composite runs [`install/install.mjs`](install/install.mjs), which logs each decision to the job log.
+The **Install** step runs [`src/main.mjs`](src/main.mjs) `install`, which loads [`src/steps/install.mjs`](src/steps/install.mjs) and logs each decision to the job log.
 
 In **`working-directory`** (relative to `GITHUB_WORKSPACE`, usually the repo root):
 
@@ -121,7 +121,7 @@ For specialized setups, you can set **`CRITIQ_RULES_ROOT`** in the job environme
 | `fail-on-severity` | `off` | Fail the job when any finding is at or above this severity: **`off`** (default), **`low`**, **`medium`**, **`high`**, **`critical`**. |
 | `comment-mode` | `inline` | **`inline`** (default): review comments. **`inline+summary`**: comments plus one sticky **issue** comment with counts. **`off`**: scan and outputs only. |
 
-Node.js is fixed at **24** (`actions/setup-node` in the root composite). The scan and post steps live in nested composites under [`install/`](install/), [`scan/`](scan/), [`post/`](post/), and [`fail-on-severity/`](fail-on-severity/).
+Node.js is fixed at **24** (`actions/setup-node` in the root composite). Scan, install, post, and severity gate are separate Node entrypoints under [`src/steps/`](src/steps/), dispatched by [`src/main.mjs`](src/main.mjs), with shared helpers in [`src/lib/*.util.mjs`](src/lib/).
 Posting review comments uses the job’s automatic **`GITHUB_TOKEN`**; set **`permissions.pull-requests: write`** on the workflow when using **`comment-mode`** **`inline`** or **`inline+summary`**.
 
 ---
@@ -216,14 +216,15 @@ Pass through inputs (`cli-version`, `rules-version`, `working-directory`, `targe
 
 | Path | Purpose |
 | --- | --- |
-| [`action.yml`](action.yml) | Root composite: Node 24, then `./install`, `./scan`, `./post`, `./fail-on-severity`. |
-| [`install/`](install/) | Install composite + `install.mjs` (repo install + published CLI when needed). |
-| [`scan/`](scan/) | Scan composite + `run.mjs` (`critiq check`, JSON + outputs). |
-| [`post/`](post/) | Post composite + `run.mjs` (PR comments via `lib/post-review-comments.mjs`). |
-| [`fail-on-severity/`](fail-on-severity/) | Severity gate calling `lib/evaluate-fail-on-severity.mjs`. |
-| [`lib/post-review-comments.mjs`](lib/post-review-comments.mjs) | GitHub REST/GraphQL: create reviews, dedupe, optional summary comment. |
-| [`lib/evaluate-fail-on-severity.mjs`](lib/evaluate-fail-on-severity.mjs) | Applies **`fail-on-severity`** after the scan. |
-| [`.github/workflows/self-test.yml`](.github/workflows/self-test.yml) | CI for this repository. |
+| [`action.yml`](action.yml) | Root composite: Node 24, then `src/main.mjs` steps `install`, `scan`, `post`, `fail-on-severity`. |
+| [`src/main.mjs`](src/main.mjs) | Dispatches to `src/steps/<name>.mjs`. |
+| [`src/steps/install.mjs`](src/steps/install.mjs) | Repo `npm ci` / `npm install` and optional published CLI + rules under `RUNNER_TEMP`. |
+| [`src/steps/scan.mjs`](src/steps/scan.mjs) | `critiq check`, JSON file + `GITHUB_OUTPUT`. |
+| [`src/steps/post.mjs`](src/steps/post.mjs) | PR comment orchestration; calls `src/lib/post-review-comments.mjs`. |
+| [`src/steps/fail-on-severity.mjs`](src/steps/fail-on-severity.mjs) | Applies **`fail-on-severity`** after the scan. |
+| [`src/lib/*.util.mjs`](src/lib/) | Shared helpers (GitHub output/env, workspace, npm, API client, severity, etc.). |
+| [`src/lib/post-review-comments.mjs`](src/lib/post-review-comments.mjs) | GitHub REST/GraphQL: create reviews, dedupe, optional summary comment. |
+| [`.github/workflows/self-test.yml`](.github/workflows/self-test.yml) | CI for this repository (`target: test/fixtures/minimal-repo`). |
 
 **Network:** runners contact **npm** (install) and **GitHub** (API). This action does not send data to other third-party endpoints.
 

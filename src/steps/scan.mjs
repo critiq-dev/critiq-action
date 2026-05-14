@@ -5,12 +5,16 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { resolveCritiqBin } from '../lib/critiq-bin.util.mjs';
+import { readPrShasFromEvent } from '../lib/event.util.mjs';
+import { writeGithubOutputPairs } from '../lib/github-output.util.mjs';
+import { createLogger } from '../lib/log.util.mjs';
+import { resolveActionWorkspace } from '../lib/workspace.util.mjs';
 
-const workspace = process.env.GITHUB_WORKSPACE ?? process.cwd();
-const wdInput = (process.env.INPUT_WORKING_DIRECTORY ?? '.').trim() || '.';
-const cwd = path.resolve(workspace, wdInput);
+const log = createLogger('Critiq scan');
+const cwd = resolveActionWorkspace(process.env.INPUT_WORKING_DIRECTORY);
 const target = (process.env.INPUT_TARGET ?? '.').trim() || '.';
 const staged = (process.env.INPUT_STAGED ?? 'false').toLowerCase() === 'true';
 const baseRef = (process.env.INPUT_BASE_REF ?? '').trim();
@@ -19,40 +23,8 @@ const eventName = process.env.GITHUB_EVENT_NAME ?? '';
 const runId = process.env.GITHUB_RUN_ID ?? '0';
 const attempt = process.env.GITHUB_RUN_ATTEMPT ?? '0';
 const runnerTemp = process.env.RUNNER_TEMP ?? '/tmp';
-const ghOut = process.env.GITHUB_OUTPUT;
 const jsonPath = path.join(runnerTemp, `critiq-check-${runId}-${attempt}.json`);
 const stderrPath = path.join(runnerTemp, `critiq-check-${runId}-${attempt}.stderr`);
-
-function log(msg) {
-  console.log(`[Critiq scan] ${msg}`);
-}
-
-function writeOut(pairs) {
-  if (!ghOut) return;
-  for (const [k, v] of pairs) {
-    const s = String(v).replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-    appendFileSync(ghOut, `${k}=${s}\n`, 'utf8');
-  }
-}
-
-function readPrShasFromEvent() {
-  const p = process.env.GITHUB_EVENT_PATH;
-  if (!p || !existsSync(p)) return { base: '', head: '' };
-  try {
-    const ev = JSON.parse(readFileSync(p, 'utf8'));
-    const pr = ev.pull_request;
-    if (!pr) return { base: '', head: '' };
-    return { base: pr.base?.sha ?? '', head: pr.head?.sha ?? '' };
-  } catch {
-    return { base: '', head: '' };
-  }
-}
-
-function critiqBin() {
-  const fromEnv = process.env.CRITIQ_BIN?.trim();
-  if (fromEnv) return fromEnv;
-  return path.join(cwd, 'node_modules', '.bin', 'critiq');
-}
 
 function extraArgs() {
   if (staged) {
@@ -81,7 +53,7 @@ function extraArgs() {
 }
 
 const extra = extraArgs();
-const bin = critiqBin();
+const bin = resolveCritiqBin(cwd);
 log(`binary: ${bin}`);
 log(`target: ${target}`);
 log(`json output: ${jsonPath}`);
@@ -97,7 +69,7 @@ const r = spawnSync(bin, args, {
 
 if (r.error) {
   console.error('[Critiq scan]', r.error);
-  writeOut([
+  writeGithubOutputPairs([
     ['exit-code', 1],
     ['finding-count', 0],
     ['json-path', jsonPath],
@@ -130,7 +102,7 @@ if (stderr) {
 if (!stdout.trim()) {
   console.error(`[Critiq scan] No JSON on stdout (exit ${code}). Stderr log: ${stderrPath}`);
   if (stderr) console.error(stderr);
-  writeOut([
+  writeGithubOutputPairs([
     ['exit-code', code],
     ['finding-count', 0],
     ['json-path', jsonPath],
@@ -149,7 +121,7 @@ try {
 }
 
 log(`critiq exit=${code}, findingCount=${findingCount}`);
-writeOut([
+writeGithubOutputPairs([
   ['exit-code', code],
   ['finding-count', findingCount],
   ['json-path', jsonPath],
