@@ -1,0 +1,195 @@
+name: Critiq
+description: Run the Critiq OSS CLI and post inline PR review comments from the findings.
+author: Critiq
+
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  node-version:
+    description: Node.js version for setup-node
+    required: false
+    default: '24'
+  cli-version:
+    description: Semver range or dist-tag for @critiq/cli (npm)
+    required: false
+    default: 'latest'
+  rules-version:
+    description: Semver range or dist-tag for @critiq/rules (npm)
+    required: false
+    default: 'latest'
+  working-directory:
+    description: Directory containing the checkout (must be inside the git repo for diff scans)
+    required: false
+    default: '.'
+  target:
+    description: Path passed to critiq check (directory or file under the repo)
+    required: false
+    default: '.'
+  base-ref:
+    description: Git ref for diff base. On pull_request, leave empty to use the PR base SHA.
+    required: false
+    default: ''
+  head-ref:
+    description: Git ref for diff head. On pull_request, leave empty to use the PR head SHA.
+    required: false
+    default: ''
+  staged:
+    description: When true, pass --staged to critiq check (cannot be combined with base/head)
+    required: false
+    default: 'false'
+  use-repository-scope:
+    description: When true, run a full repository scan (omit --base/--head) even on pull_request events
+    required: false
+    default: 'false'
+  fail-on-severity:
+    description: Fail the job when any finding is at or above this severity (off | low | medium | high | critical). Default off never fails for severity.
+    required: false
+    default: 'off'
+  comment-mode:
+    description: off | inline | inline+summary (summary is a sticky issue comment on the PR)
+    required: false
+    default: 'inline'
+  github-token:
+    description: Defaults to the workflow GITHUB_TOKEN; override only if you pass a different credential from another step
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: Exit code from critiq check
+    value: ${{ steps.scan.outputs.exit-code }}
+  finding-count:
+    description: Number of catalog findings in the JSON envelope
+    value: ${{ steps.scan.outputs.finding-count }}
+  json-path:
+    description: Path to the critiq JSON output file on the runner
+    value: ${{ steps.scan.outputs.json-path }}
+  review-comments-created:
+    description: Number of inline review comments created in the last post step
+    value: ${{ steps.post.outputs.review-comments-created }}
+  review-comments-skipped:
+    description: Number of findings skipped (dedupe or resolved thread)
+    value: ${{ steps.post.outputs.review-comments-skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install Critiq CLI and rules
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        CLI_VER="${{ inputs.cli-version }}"
+        RULES_VER="${{ inputs.rules-version }}"
+        if [[ -f package.json ]]; then
+          if [[ -f package-lock.json ]] || [[ -f npm-shrinkwrap.json ]]; then
+            npm ci
+          else
+            npm install
+          fi
+          if [[ ! -x ./node_modules/.bin/critiq ]]; then
+            npm install --no-save "@critiq/cli@${CLI_VER}" "@critiq/rules@${RULES_VER}"
+          fi
+        else
+          npm install --no-save "@critiq/cli@${CLI_VER}" "@critiq/rules@${RULES_VER}"
+        fi
+
+    - name: Run critiq check
+      id: scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      continue-on-error: true
+      run: |
+        set -euo pipefail
+        JSON_PATH="${RUNNER_TEMP}/critiq-check-${{ github.run_id }}-${{ github.run_attempt }}.json"
+        TARGET="${{ inputs.target }}"
+        STAGED="${{ inputs.staged }}"
+        BASE_REF="${{ inputs.base-ref }}"
+        HEAD_REF="${{ inputs.head-ref }}"
+        REPO_SCOPE="${{ inputs.use-repository-scope }}"
+        EVENT_NAME="${{ github.event_name }}"
+
+        if [[ "$STAGED" == "true" ]]; then
+          EXTRA=(--staged)
+        elif [[ "$REPO_SCOPE" == "true" ]]; then
+          EXTRA=()
+        elif [[ "$EVENT_NAME" == "pull_request" ]] && [[ -z "$BASE_REF" ]] && [[ -z "$HEAD_REF" ]]; then
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+          HEAD_REF="${{ github.event.pull_request.head.sha }}"
+          EXTRA=(--base "$BASE_REF" --head "$HEAD_REF")
+        elif [[ -n "$BASE_REF" && -n "$HEAD_REF" ]]; then
+          EXTRA=(--base "$BASE_REF" --head "$HEAD_REF")
+        elif [[ -n "$BASE_REF" || -n "$HEAD_REF" ]]; then
+          echo "Both base-ref and head-ref must be set together (or leave both empty for pull_request defaults)." >&2
+          exit 1
+        else
+          EXTRA=()
+        fi
+
+        set +e
+        ./node_modules/.bin/critiq check "$TARGET" --format json "${EXTRA[@]}" > "$JSON_PATH" 2> "${RUNNER_TEMP}/critiq-check.stderr"
+        CODE=$?
+        set -e
+
+        if [[ ! -s "$JSON_PATH" ]]; then
+          echo "critiq check produced no JSON output (exit $CODE). Stderr:" >&2
+          cat "${RUNNER_TEMP}/critiq-check.stderr" >&2 || true
+          echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "finding-count=0" >> "$GITHUB_OUTPUT"
+          echo "json-path=$JSON_PATH" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        FC="$(node -e "try{const j=require(process.argv[1]);process.stdout.write(String(j.findingCount??0))}catch(e){process.stdout.write('0')}" "$JSON_PATH")"
+        echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
+        echo "finding-count=$FC" >> "$GITHUB_OUTPUT"
+        echo "json-path=$JSON_PATH" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Post PR comments
+      id: post
+      shell: bash
+      continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        CRITIQ_JSON_PATH: ${{ steps.scan.outputs.json-path }}
+        COMMENT_MODE: ${{ inputs.comment-mode }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_API_URL: ${{ github.api_url }}
+      run: |
+        set -euo pipefail
+        MODE="${{ inputs.comment-mode }}"
+        EVT="${{ github.event_name }}"
+        if [[ "$MODE" != "inline" && "$MODE" != "inline+summary" ]]; then
+          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
+          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ "$EVT" != "pull_request" ]]; then
+          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
+          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        node "${{ github.action_path }}/lib/post-review-comments.mjs" || {
+          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
+          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        }
+
+    - name: Fail on severity threshold
+      if: ${{ inputs.fail-on-severity != 'off' }}
+      shell: bash
+      env:
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        CRITIQ_JSON_PATH: ${{ steps.scan.outputs.json-path }}
+      run: node "${{ github.action_path }}/lib/evaluate-fail-on-severity.mjs"

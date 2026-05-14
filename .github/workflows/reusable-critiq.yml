@@ -1,0 +1,65 @@
+# Reusable workflow: run Critiq on a checked-out repository (critiq-dev/critiq-action).
+name: Reusable Critiq scan
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version for setup-node
+        type: string
+        default: '24'
+      cli-version:
+        description: npm dist-tag or semver for @critiq/cli
+        type: string
+        default: latest
+      rules-version:
+        description: npm dist-tag or semver for @critiq/rules
+        type: string
+        default: latest
+      working-directory:
+        description: Working directory for install and scan
+        type: string
+        default: '.'
+      target:
+        description: Path argument to critiq check
+        type: string
+        default: '.'
+      comment-mode:
+        description: off | inline | inline+summary
+        type: string
+        default: inline
+      fail-on-severity:
+        description: off | low | medium | high | critical — fail when any finding meets or exceeds this level
+        type: string
+        default: 'off'
+      use-repository-scope:
+        description: When true, full repo scan even on pull_request (see action README)
+        type: string
+        default: 'false'
+    secrets:
+      github_token:
+        description: Optional token with pull-requests:write; omit to use caller GITHUB_TOKEN
+        required: false
+
+jobs:
+  critiq:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: critiq-dev/critiq-action@v1
+        with:
+          node-version: ${{ inputs.node-version }}
+          cli-version: ${{ inputs.cli-version }}
+          rules-version: ${{ inputs.rules-version }}
+          working-directory: ${{ inputs.working-directory }}
+          target: ${{ inputs.target }}
+          comment-mode: ${{ inputs.comment-mode }}
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          use-repository-scope: ${{ inputs.use-repository-scope }}
+          github-token: ${{ secrets.github_token || github.token }}

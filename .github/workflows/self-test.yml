@@ -1,0 +1,74 @@
+name: Self test
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  critiq-pr-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: First Critiq run (PR diff scope)
+        id: first
+        uses: ./
+        with:
+          target: fixtures/minimal-repo
+          comment-mode: inline
+          fail-on-severity: off
+
+      - name: Second Critiq run (expect no growth in new inline comments)
+        id: second
+        uses: ./
+        with:
+          target: fixtures/minimal-repo
+          comment-mode: inline
+          fail-on-severity: off
+
+      - name: Assert monotonic comment count
+        shell: bash
+        run: |
+          set -euo pipefail
+          a="${{ steps.first.outputs.review-comments-created }}"
+          b="${{ steps.second.outputs.review-comments-created }}"
+          echo "first created=$a skipped=${{ steps.first.outputs.review-comments-skipped }}"
+          echo "second created=$b skipped=${{ steps.second.outputs.review-comments-skipped }}"
+          test "$b" -le "$a"
+
+  critiq-scan-push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan only (no PR comments)
+        id: scan
+        uses: ./
+        with:
+          target: fixtures/minimal-repo
+          use-repository-scope: true
+          comment-mode: 'off'
+          fail-on-severity: off
+
+      - name: Assert scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.scan.outputs.finding-count }}" = "1"
+          test "${{ steps.scan.outputs.review-comments-created }}" = "0"
