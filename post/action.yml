@@ -1,0 +1,36 @@
+name: Post PR comments
+description: >-
+  Creates inline review comments from Critiq JSON on pull_request when comment-mode requests it.
+
+inputs:
+  comment-mode:
+    description: off | inline | inline+summary
+    required: false
+    default: 'inline'
+  json-path:
+    description: Path to critiq check JSON (from scan step json-path output)
+    required: false
+    default: ''
+
+outputs:
+  review-comments-created:
+    description: Number of inline review comments created
+    value: ${{ steps.run.outputs.review-comments-created }}
+  review-comments-skipped:
+    description: Number of findings skipped
+    value: ${{ steps.run.outputs.review-comments-skipped }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      continue-on-error: true
+      run: node "${{ github.action_path }}/run.mjs"
+      env:
+        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        INPUT_JSON_PATH: ${{ inputs.json-path }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_API_URL: ${{ github.api_url }}

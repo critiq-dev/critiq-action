@@ -7,16 +7,12 @@ branding:
   color: purple
 
 inputs:
-  node-version:
-    description: Node.js version for setup-node
-    required: false
-    default: '24'
   cli-version:
-    description: Semver range or dist-tag for @critiq/cli (npm)
+    description: Semver range or dist-tag for @critiq/cli (npm) when the repo does not declare @critiq/cli on the root package.json
     required: false
     default: 'latest'
   rules-version:
-    description: Semver range or dist-tag for @critiq/rules (npm)
+    description: Semver range or dist-tag for @critiq/rules (npm) when installing published packages alongside the CLI
     required: false
     default: 'latest'
   working-directory:
@@ -37,10 +33,6 @@ inputs:
     default: ''
   staged:
     description: When true, pass --staged to critiq check (cannot be combined with base/head)
-    required: false
-    default: 'false'
-  use-repository-scope:
-    description: When true, run a full repository scan (omit --base/--head) even on pull_request events
     required: false
     default: 'false'
   fail-on-severity:
@@ -75,117 +67,36 @@ runs:
     - name: Setup Node
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ inputs.node-version }}
+        node-version: '24'
 
     - name: Install Critiq CLI and rules
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        set -euo pipefail
-        CLI_VER="${{ inputs.cli-version }}"
-        RULES_VER="${{ inputs.rules-version }}"
-        if [[ -f package.json ]]; then
-          if [[ -f package-lock.json ]] || [[ -f npm-shrinkwrap.json ]]; then
-            npm ci
-          else
-            npm install
-          fi
-          if [[ ! -x ./node_modules/.bin/critiq ]]; then
-            npm install --no-save "@critiq/cli@${CLI_VER}" "@critiq/rules@${RULES_VER}"
-          fi
-        else
-          npm install --no-save "@critiq/cli@${CLI_VER}" "@critiq/rules@${RULES_VER}"
-        fi
+      uses: ./install
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        cli-version: ${{ inputs.cli-version }}
+        rules-version: ${{ inputs.rules-version }}
 
     - name: Run critiq check
       id: scan
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      continue-on-error: true
-      run: |
-        set -euo pipefail
-        JSON_PATH="${RUNNER_TEMP}/critiq-check-${{ github.run_id }}-${{ github.run_attempt }}.json"
-        TARGET="${{ inputs.target }}"
-        STAGED="${{ inputs.staged }}"
-        BASE_REF="${{ inputs.base-ref }}"
-        HEAD_REF="${{ inputs.head-ref }}"
-        REPO_SCOPE="${{ inputs.use-repository-scope }}"
-        EVENT_NAME="${{ github.event_name }}"
-
-        if [[ "$STAGED" == "true" ]]; then
-          EXTRA=(--staged)
-        elif [[ "$REPO_SCOPE" == "true" ]]; then
-          EXTRA=()
-        elif [[ "$EVENT_NAME" == "pull_request" ]] && [[ -z "$BASE_REF" ]] && [[ -z "$HEAD_REF" ]]; then
-          BASE_REF="${{ github.event.pull_request.base.sha }}"
-          HEAD_REF="${{ github.event.pull_request.head.sha }}"
-          EXTRA=(--base "$BASE_REF" --head "$HEAD_REF")
-        elif [[ -n "$BASE_REF" && -n "$HEAD_REF" ]]; then
-          EXTRA=(--base "$BASE_REF" --head "$HEAD_REF")
-        elif [[ -n "$BASE_REF" || -n "$HEAD_REF" ]]; then
-          echo "Both base-ref and head-ref must be set together (or leave both empty for pull_request defaults)." >&2
-          exit 1
-        else
-          EXTRA=()
-        fi
-
-        set +e
-        ./node_modules/.bin/critiq check "$TARGET" --format json "${EXTRA[@]}" > "$JSON_PATH" 2> "${RUNNER_TEMP}/critiq-check.stderr"
-        CODE=$?
-        set -e
-
-        if [[ ! -s "$JSON_PATH" ]]; then
-          echo "critiq check produced no JSON output (exit $CODE). Stderr:" >&2
-          cat "${RUNNER_TEMP}/critiq-check.stderr" >&2 || true
-          echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "finding-count=0" >> "$GITHUB_OUTPUT"
-          echo "json-path=$JSON_PATH" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        FC="$(node -e "try{const j=require(process.argv[1]);process.stdout.write(String(j.findingCount??0))}catch(e){process.stdout.write('0')}" "$JSON_PATH")"
-        echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
-        echo "finding-count=$FC" >> "$GITHUB_OUTPUT"
-        echo "json-path=$JSON_PATH" >> "$GITHUB_OUTPUT"
-        exit 0
+      uses: ./scan
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        target: ${{ inputs.target }}
+        staged: ${{ inputs.staged }}
+        base-ref: ${{ inputs.base-ref }}
+        head-ref: ${{ inputs.head-ref }}
 
     - name: Post PR comments
       id: post
-      shell: bash
+      uses: ./post
       continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-        CRITIQ_JSON_PATH: ${{ steps.scan.outputs.json-path }}
-        COMMENT_MODE: ${{ inputs.comment-mode }}
-        GITHUB_EVENT_NAME: ${{ github.event_name }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_API_URL: ${{ github.api_url }}
-      run: |
-        set -euo pipefail
-        MODE="${{ inputs.comment-mode }}"
-        EVT="${{ github.event_name }}"
-        if [[ "$MODE" != "inline" && "$MODE" != "inline+summary" ]]; then
-          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
-          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        if [[ "$EVT" != "pull_request" ]]; then
-          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
-          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        node "${{ github.action_path }}/lib/post-review-comments.mjs" || {
-          echo "review-comments-created=0" >> "$GITHUB_OUTPUT"
-          echo "review-comments-skipped=0" >> "$GITHUB_OUTPUT"
-          exit 0
-        }
+      with:
+        comment-mode: ${{ inputs.comment-mode }}
+        json-path: ${{ steps.scan.outputs.json-path }}
 
     - name: Fail on severity threshold
       if: ${{ inputs.fail-on-severity != 'off' }}
-      shell: bash
-      env:
-        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
-        CRITIQ_JSON_PATH: ${{ steps.scan.outputs.json-path }}
-      run: node "${{ github.action_path }}/lib/evaluate-fail-on-severity.mjs"
+      uses: ./fail-on-severity
+      with:
+        json-path: ${{ steps.scan.outputs.json-path }}
+        fail-on-severity: ${{ inputs.fail-on-severity }}

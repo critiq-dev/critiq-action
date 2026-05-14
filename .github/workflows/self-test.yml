@@ -62,7 +62,6 @@ jobs:
         uses: ./
         with:
           target: fixtures/minimal-repo
-          use-repository-scope: true
           comment-mode: 'off'
           fail-on-severity: off
 

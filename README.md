@@ -87,15 +87,16 @@ The check runs **after** the scan and PR comment step so feedback is still poste
 
 ## How Critiq is installed
 
-In **`working-directory`** (usually the repo root):
+The **[`install/action.yml`](install/action.yml)** composite runs [`install/install.mjs`](install/install.mjs), which logs each decision to the job log.
 
-- If **`package.json` is present**, the action runs **`npm ci`** when a lockfile exists (`package-lock.json` or `npm-shrinkwrap.json`), otherwise **`npm install`**, so versions from your manifest and lockfile are used when `@critiq/cli` is already a dependency.
-- If **`critiq` is still missing** from `node_modules/.bin` after that (for example the repo does not list `@critiq/cli`), the action runs **`npm install --no-save`** for `@critiq/cli` and `@critiq/rules` using your **`cli-version`** and **`rules-version`** inputs (default **`latest`**).
-- If there is **no `package.json`**, it only runs that **`npm install --no-save`** step so Critiq is available without creating a manifest.
+In **`working-directory`** (relative to `GITHUB_WORKSPACE`, usually the repo root):
 
-Your `package.json` is not rewritten; extra packages use `--no-save`.
-Its recommended to add `@critiq/cli` and `@critiq/rules` and which will pin the version for a reproducible workflow.  
+- If **`package.json` exists**, the script runs **`npm ci`** when a lockfile exists, otherwise **`npm install`**.
+- If the **root** `package.json` lists **`@critiq/cli`** in **`dependencies`** or **`devDependencies`**, the scan uses **`./node_modules/.bin/critiq`** from that install (rules come from your graph).
+- If **`@critiq/cli` is not declared** on the root manifest (typical for monorepos that ship the CLI from a workspace), the script installs **`@critiq/cli`** and **`@critiq/rules`** from npm into **`RUNNER_TEMP/critiq-action-npm`** (versions from **`cli-version`** and **`rules-version`**, default **`latest`**) and sets **`CRITIQ_BIN`** so the scan does not pick up a workspace-linked binary by accident.
+- If there is **no `package.json`**, it only runs that npm prefix install.
 
+Your `package.json` is not rewritten; extra packages use **`--no-save`**. It is recommended to add **`@critiq/cli`** and **`@critiq/rules`** to **`package.json`** when you want a fully pinned, reproducible install graph.
 ---
 
 ## Advanced configuration (optional)
@@ -110,18 +111,17 @@ For specialized setups, you can set **`CRITIQ_RULES_ROOT`** in the job environme
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `node-version` | `24` | Node.js version for `actions/setup-node`. |
-| `cli-version` | `latest` | npm dist-tag or semver for `@critiq/cli` when the action must install Critiq itself (see [How Critiq is installed](#how-critiq-is-installed)). |
-| `rules-version` | `latest` | Same for `@critiq/rules` when a no-save install is required. |
+| `cli-version` | `latest` | npm dist-tag or semver for `@critiq/cli` when the root `package.json` does not declare `@critiq/cli` (see [How Critiq is installed](#how-critiq-is-installed)). |
+| `rules-version` | `latest` | Same for `@critiq/rules` when the prefix install runs. |
 | `working-directory` | `.` | Where installs and `critiq check` run (must be inside the git checkout). |
 | `target` | `.` | Path passed to `critiq check`. |
 | `base-ref` | *(empty)* | With `head-ref`, passes `--base` / `--head`. Leave both empty on `pull_request` to use the PR base and head SHAs. |
 | `head-ref` | *(empty)* | See `base-ref`. |
 | `staged` | `false` | When `true`, runs with `--staged` (not combinable with base/head). |
-| `use-repository-scope` | `false` | When `true`, full-repository scan on `pull_request` (omits base/head). Affects which lines can receive inline comments; see [Pull request comments](#pull-request-comments). |
 | `fail-on-severity` | `off` | Fail the job when any finding is at or above this severity: **`off`** (default), **`low`**, **`medium`**, **`high`**, **`critical`**. |
 | `comment-mode` | `inline` | **`inline`** (default): review comments. **`inline+summary`**: comments plus one sticky **issue** comment with counts. **`off`**: scan and outputs only. |
 
+Node.js is fixed at **24** (`actions/setup-node` in the root composite). The scan and post steps live in nested composites under [`install/`](install/), [`scan/`](scan/), [`post/`](post/), and [`fail-on-severity/`](fail-on-severity/).
 Posting review comments uses the job’s automatic **`GITHUB_TOKEN`**; set **`permissions.pull-requests: write`** on the workflow when using **`comment-mode`** **`inline`** or **`inline+summary`**.
 
 ---
@@ -159,7 +159,7 @@ Many repositories are a single package at the root: keep **`working-directory: .
 
 ## Pull request comments
 
-On `pull_request`, the action posts **inline review comments** on the PR head commit unless **`comment-mode`** is **`off`**. GitHub only allows those comments on lines that appear in the **pull request diff**; the default diff-scoped run matches that. A full-repo scan (`use-repository-scope: true`) can surface findings on lines outside the diff; the comment step tolerates API errors so the workflow can still finish.
+On `pull_request`, the action posts **inline review comments** on the PR head commit unless **`comment-mode`** is **`off`**. GitHub only allows those comments on lines that appear in the **pull request diff**; the default diff-scoped run matches that. On other events (for example **`push`**), `critiq check` runs without `--base` / `--head` (full tree scope for that checkout). The comment step tolerates API errors so the workflow can still finish.
 
 ### Deduplication and resolved threads
 
@@ -206,20 +206,9 @@ jobs:
     secrets: inherit
 ```
 
-Optional inputs include **`checkout-layout`** (default **`single`**). Use **`checkout-layout: rules-with-sibling-core`** and **`working-directory: critiq-rules`** when the caller is **critiq-rules** (it checks out your repo under `critiq-rules/`, clones **critiq-dev/critiq-core**, builds it, then runs Critiq in that working directory so `file:../critiq-core/...` dependencies resolve).
+The reusable workflow checks out **only** the caller repository. Repositories that depend on a sibling **critiq-core** checkout (for example `file:../critiq-core/...` in `package.json`) should use a small local workflow: clone **critiq-dev/critiq-core**, build it, then run this action with the right **`working-directory`** (see **critiq-rules** `.github/workflows/critiq-pr.yml`).
 
-```yaml
-jobs:
-  critiq:
-    uses: critiq-dev/critiq-action/.github/workflows/reusable-critiq.yml@main
-    secrets: inherit
-    with:
-      checkout-layout: rules-with-sibling-core
-      working-directory: critiq-rules
-      fail-on-severity: off
-```
-
-Pass through other inputs (`cli-version`, `rules-version`, `target`, `comment-mode`, `fail-on-severity`, `use-repository-scope`, `node-version`) the same way as in [`reusable-critiq.yml`](.github/workflows/reusable-critiq.yml).
+Pass through inputs (`cli-version`, `rules-version`, `working-directory`, `target`, `comment-mode`, `fail-on-severity`) the same way as in [`reusable-critiq.yml`](.github/workflows/reusable-critiq.yml).
 
 ---
 
@@ -227,7 +216,11 @@ Pass through other inputs (`cli-version`, `rules-version`, `target`, `comment-mo
 
 | Path | Purpose |
 | --- | --- |
-| [`action.yml`](action.yml) | Composite action definition. |
+| [`action.yml`](action.yml) | Root composite: Node 24, then `./install`, `./scan`, `./post`, `./fail-on-severity`. |
+| [`install/`](install/) | Install composite + `install.mjs` (repo install + published CLI when needed). |
+| [`scan/`](scan/) | Scan composite + `run.mjs` (`critiq check`, JSON + outputs). |
+| [`post/`](post/) | Post composite + `run.mjs` (PR comments via `lib/post-review-comments.mjs`). |
+| [`fail-on-severity/`](fail-on-severity/) | Severity gate calling `lib/evaluate-fail-on-severity.mjs`. |
 | [`lib/post-review-comments.mjs`](lib/post-review-comments.mjs) | GitHub REST/GraphQL: create reviews, dedupe, optional summary comment. |
 | [`lib/evaluate-fail-on-severity.mjs`](lib/evaluate-fail-on-severity.mjs) | Applies **`fail-on-severity`** after the scan. |
 | [`.github/workflows/self-test.yml`](.github/workflows/self-test.yml) | CI for this repository. |

@@ -1,0 +1,20 @@
+name: Fail on severity threshold
+description: Exits non-zero when findings meet or exceed the configured severity.
+
+inputs:
+  json-path:
+    description: Path to critiq check JSON
+    required: true
+  fail-on-severity:
+    description: off | low | medium | high | critical
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fail on severity threshold
+      shell: bash
+      run: node "${{ github.action_path }}/../lib/evaluate-fail-on-severity.mjs"
+      env:
+        CRITIQ_JSON_PATH: ${{ inputs.json-path }}
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}

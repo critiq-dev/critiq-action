@@ -1,23 +1,9 @@
-# Reusable workflow: run Critiq on a checked-out repository (critiq-dev/critiq-action).
+# Reusable workflow: checkout the caller repo and run critiq-dev/critiq-action.
 name: Reusable Critiq scan
 
 on:
   workflow_call:
     inputs:
-      checkout-layout:
-        description: >-
-          single = one checkout at repo root (typical app or critiq-core).
-          rules-with-sibling-core = caller repo under critiq-rules/ plus critiq-dev/critiq-core (critiq-rules package.json file deps).
-        type: string
-        default: single
-      critiq-core-ref:
-        description: Git ref for critiq-dev/critiq-core when checkout-layout is rules-with-sibling-core
-        type: string
-        default: main
-      node-version:
-        description: Node.js version for setup-node
-        type: string
-        default: '24'
       cli-version:
         description: npm dist-tag or semver for @critiq/cli
         type: string
@@ -27,7 +13,7 @@ on:
         type: string
         default: latest
       working-directory:
-        description: Working directory for install and scan (use critiq-rules with rules-with-sibling-core)
+        description: Working directory for npm install and scan (relative to repository root)
         type: string
         default: '.'
       target:
@@ -42,10 +28,6 @@ on:
         description: off | low | medium | high | critical — fail when any finding meets or exceeds this level
         type: string
         default: 'off'
-      use-repository-scope:
-        description: When true, full repo scan even on pull_request (see action README)
-        type: string
-        default: 'false'
 
 jobs:
   critiq:
@@ -54,79 +36,18 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Validate checkout-layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ inputs.checkout-layout }}" in
-            single|rules-with-sibling-core) ;;
-            *)
-              echo "Unknown checkout-layout: ${{ inputs.checkout-layout }} (expected single or rules-with-sibling-core)" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Checkout (single layout)
-        if: ${{ inputs.checkout-layout == 'single' }}
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Checkout caller repo (rules-with-sibling-core)
-        if: ${{ inputs.checkout-layout == 'rules-with-sibling-core' }}
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          path: critiq-rules
-
-      - name: Checkout critiq-core (rules-with-sibling-core)
-        if: ${{ inputs.checkout-layout == 'rules-with-sibling-core' }}
-        uses: actions/checkout@v4
-        with:
-          repository: critiq-dev/critiq-core
-          ref: ${{ inputs.critiq-core-ref }}
-          path: critiq-core
-
-      - name: Configure Critiq env (rules-with-sibling-core)
-        if: ${{ inputs.checkout-layout == 'rules-with-sibling-core' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo "CRITIQ_CORE_ROOT=${{ github.workspace }}/critiq-core"
-            echo "CRITIQ_RULES_ROOT=${{ github.workspace }}/critiq-rules"
-            echo "CRITIQ_SKIP_CORE_BUILD=1"
-          } >> "$GITHUB_ENV"
-
-      - name: Setup Node (rules-with-sibling-core)
-        if: ${{ inputs.checkout-layout == 'rules-with-sibling-core' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: npm
-          cache-dependency-path: |
-            critiq-core/package-lock.json
-            critiq-rules/package-lock.json
-
-      - name: Install and build critiq-core (rules-with-sibling-core)
-        if: ${{ inputs.checkout-layout == 'rules-with-sibling-core' }}
-        shell: bash
-        working-directory: critiq-core
-        run: |
-          set -euo pipefail
-          npm ci
-          npm run build
-          npm run build:release-cli
 
       # Keep this ref aligned with the branch/tag of this workflow file (e.g. bump to @v1 when releasing).
       - name: Run Critiq
         uses: critiq-dev/critiq-action@main
         with:
-          node-version: ${{ inputs.node-version }}
           cli-version: ${{ inputs.cli-version }}
           rules-version: ${{ inputs.rules-version }}
           working-directory: ${{ inputs.working-directory }}
           target: ${{ inputs.target }}
           comment-mode: ${{ inputs.comment-mode }}
           fail-on-severity: ${{ inputs.fail-on-severity }}
-          use-repository-scope: ${{ inputs.use-repository-scope }}
