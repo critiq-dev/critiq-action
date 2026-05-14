@@ -61,7 +61,7 @@ export function printActionRunSummary(opts) {
     return;
   }
 
-  let msg = `Critiq successfully scanned this pull request, found ${findingCount} ${issueWord}, and posted ${commentsCreated} new inline ${commentWord}.`;
+  let msg = `\nCritiq successfully scanned this pull request, found ${findingCount} ${issueWord}, and posted ${commentsCreated} new inline ${commentWord}.`;
   if (commentsSkipped > 0) {
     const skipWord = commentsSkipped === 1 ? 'issue was' : 'issues were';
     msg += ` ${commentsSkipped} ${skipWord} already on the pull request from an earlier review (duplicate finding, resolved thread, or line already carrying a comment).`;
