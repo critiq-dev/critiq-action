@@ -116,7 +116,7 @@ try {
 }
 
 logCheckFindingsSummary(log, envelope);
-log(`critiq exit=${code}, findingCount=${findingCount}`);
+log(`\ncritiq exit=${code}, findingCount=${findingCount}`);
 writeGithubOutputPairs([
   ['exit-code', code],
   ['finding-count', findingCount],
