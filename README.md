@@ -8,6 +8,8 @@ This action runs **[Critiq](https://www.npmjs.com/package/@critiq/cli)** on your
 
 This is a **composite action** from [`critiq-dev/critiq-action`](https://github.com/critiq-dev/critiq-action) on the **GitHub Marketplace**. It does not require Critiq Cloud, an account, or a paid product.
 
+**Legal (Marketplace):** [Privacy notice](PRIVACY.md) · [Terms of use](TERMS.md) · [Security](SECURITY.md) · [Support](#support)
+
 ---
 
 ## What this action does
@@ -226,10 +228,38 @@ Pass through inputs (`cli-version`, `rules-version`, `working-directory`, `targe
 | [`src/lib/post-review-comments.mjs`](src/lib/post-review-comments.mjs) | GitHub REST/GraphQL: create reviews, dedupe, optional summary comment. |
 | [`.github/workflows/self-test.yml`](.github/workflows/self-test.yml) | CI for this repository (`target: test/fixtures/minimal-repo`). |
 
-**Network:** runners contact **npm** (install) and **GitHub** (API). This action does not send data to other third-party endpoints.
+**Network:** runners contact **npm** (install) and **GitHub** (API) only. Scanning runs on your runner; Critiq does not receive your repository or findings. See [Privacy notice](PRIVACY.md).
+
+---
+
+## Support
+
+| Channel | Use for |
+| --- | --- |
+| [**GitHub Issues**](https://github.com/critiq-dev/critiq-action/issues) | Bugs, workflow help, feature requests for this action |
+| [**Security**](SECURITY.md) | Vulnerability reports (use Security Advisories, not public issues) |
+| [**critiq-dev**](https://github.com/critiq-dev) | Related OSS repos (`critiq-core`, `critiq-rules`) |
+
+Support is best-effort via GitHub Issues; there is no paid SLA for this free Marketplace action.
+
+---
+
+## Privacy and data
+
+- **Your code** is analyzed on the **GitHub Actions runner** in your account. Critiq does not operate a backend that receives your source or scan JSON from this action.
+- **`GITHUB_TOKEN`** is used only to post PR comments when `comment-mode` is not `off`, within the workflow permissions you set.
+- **npm** is used to install `@critiq/cli` and `@critiq/rules` (or your declared dependencies).
+
+Full details: [**PRIVACY.md**](PRIVACY.md) (use this URL in your Marketplace listing).
+
+---
+
+## Terms of use
+
+Use of this action is governed by [**TERMS.md**](TERMS.md) (end-user terms for the Marketplace product). The action’s **source code** is licensed under [**Apache-2.0**](LICENSE).
 
 ---
 
 ## License
 
-Apache-2.0 — see [`LICENSE`](LICENSE).
+Apache-2.0 — see [`LICENSE`](LICENSE). End-user terms for the published action are in [`TERMS.md`](TERMS.md).
