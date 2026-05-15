@@ -1,4 +1,4 @@
-name: Critiq
+name: Critiq PR Review
 description: Run the Critiq OSS CLI and post inline PR review comments from the findings.
 author: Critiq
 
